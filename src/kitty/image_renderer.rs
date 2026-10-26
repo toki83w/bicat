@@ -436,18 +436,6 @@ impl KittyImage {
         }
         Ok(())
     }
-    /// Render the image by giving to kitty the path to a PNG file in
-    /// the payload of a unique kitty escape sequence
-    pub fn print_with_png(
-        &self,
-        w: &mut W,
-    ) -> Result<(), ProgramError> {
-        // Compression slows things down
-        if let KittyImageData::Png { path } = &self.data {
-            self.print_with_path(w, path.as_path(), "100", "f")?;
-        }
-        Ok(())
-    }
     /// Render the image by writing the raw data in a temporary file
     /// then giving to kitty the path to this file in the payload of
     /// a unique kitty escape sequence
@@ -514,8 +502,13 @@ impl KittyImageRenderer {
             fill_bg(w, area.width as usize, bg)?;
         }
 
-        let png_path = KittyImageRenderer::is_path_png(src_path).then_some(src_path.to_path_buf());
-        let is_png = png_path.is_some();
+        // PNG files are sent as they are (as a path) only when the pixels are sent
+        // in chunks. With the temp file medium the (resized) pixels are written to a
+        // temp file like for any other format: terminals that only accept `t=t` temp
+        // files, and not arbitrary file paths (`t=f`), such as foot, show nothing otherwise.
+        let png_path = (self.options.transmission_medium == TransmissionMedium::Chunks
+            && KittyImageRenderer::is_path_png(src_path))
+        .then_some(src_path.to_path_buf());
         let img = KittyImage::new(src, png_path, area, self);
         debug!(
             "transmission medium: {:?}",
@@ -523,9 +516,6 @@ impl KittyImageRenderer {
         );
         w.flush()?;
         match self.options.transmission_medium {
-            TransmissionMedium::TempFile if is_png => {
-                img.print_with_png(w)?;
-            }
             TransmissionMedium::TempFile => {
                 let temp_file_key = format!("{:?}-{}x{}", src_path, img.img_width, img.img_height,);
                 let mut old_path = None;
